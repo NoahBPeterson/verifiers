@@ -1,4 +1,5 @@
 import logging
+import os
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Generic, TypeVar
 
@@ -11,7 +12,7 @@ from anthropic import (
 from openai import AuthenticationError as OpenAIAuthenticationError
 from openai import PermissionDeniedError as OpenAIPermissionDeniedError
 
-from verifiers.errors import Error, ModelError
+from verifiers.errors import EmptyModelResponseError, Error, ModelError
 from verifiers.types import (
     ClientConfig,
     Messages,
@@ -103,6 +104,26 @@ class Client(ABC, Generic[ClientT, MessagesT, ResponseT, ToolT]):
             native_tools.append(await self.to_native_tool(tool))
         return native_tools
 
+    def _empty_response_retries(self) -> int:
+        """How many times to resample a turn whose response was unusable.
+
+        Turn-level, not rollout-level: only the failed generation is redrawn,
+        so a 40-turn rollout is not thrown away to fix one bad draw. The
+        failure this guards against is stochastic and per-call, so successive
+        draws are independent.
+        """
+        env = os.environ.get("VF_EMPTY_RESPONSE_RETRIES")
+        if env is not None:
+            try:
+                return max(0, int(env))
+            except ValueError:
+                self.logger.warning(
+                    "Ignoring non-integer VF_EMPTY_RESPONSE_RETRIES=%r", env
+                )
+        if self._config is not None:
+            return max(0, self._config.empty_response_retries)
+        return 0
+
     async def get_response(
         self,
         prompt: Messages,
@@ -128,15 +149,32 @@ class Client(ABC, Generic[ClientT, MessagesT, ResponseT, ToolT]):
 
             native_prompt, extra_kwargs = await self.to_native_prompt(prompt)
             native_tools = await self.to_native_tools(tools)
-            native_response = await self.get_native_response(
-                native_prompt,
-                model,
-                sampling_args,
-                native_tools,
-                **extra_kwargs,
-                **kwargs,
-            )
-            await self.raise_from_native_response(native_response)
+            max_empty_retries = self._empty_response_retries()
+            attempt = 0
+            while True:
+                native_response = await self.get_native_response(
+                    native_prompt,
+                    model,
+                    sampling_args,
+                    native_tools,
+                    **extra_kwargs,
+                    **kwargs,
+                )
+                try:
+                    await self.raise_from_native_response(native_response)
+                except EmptyModelResponseError:
+                    if attempt >= max_empty_retries:
+                        raise
+                    attempt += 1
+                    self.logger.warning(
+                        "Empty model response (model=%s); resampling turn "
+                        "(attempt %d/%d)",
+                        model,
+                        attempt,
+                        max_empty_retries,
+                    )
+                    continue
+                break
             response = await self.from_native_response(native_response)
             return response
         except Error:

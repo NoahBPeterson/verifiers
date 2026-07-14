@@ -930,6 +930,15 @@ class ClientConfig(BaseModel):
     renderer_pool_size: int | None = None
     """Size of the shared renderer pool. ``None`` falls back to the
     ``RendererClient`` default."""
+    empty_response_retries: int = 5
+    """Times to resample a turn whose response carried no content and no tool
+    calls. Such a turn is unusable: in tool-use rollouts it is indistinguishable
+    from "the model finished" and silently ends the rollout via
+    ``ToolEnv.no_tools_called``. The usual cause is the server's reasoning parser
+    swallowing a tool call the model *did* emit, which is stochastic per-call, so
+    resampling clears it. Turn-level — only the failed generation is redrawn, not
+    the whole rollout (that is ``max_retries``). Default 5; ``0`` restores the
+    previous behaviour. Override with the ``VF_EMPTY_RESPONSE_RETRIES`` env var."""
     api_key_var: str = "PRIME_API_KEY"
     api_base_url: str = "https://api.pinference.ai/api/v1"
     endpoint_configs: list["EndpointClientConfig"] = Field(default_factory=list)

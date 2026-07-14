@@ -366,9 +366,24 @@ class OpenAIChatCompletionsClient(
             parse_reasoning_content(message) is not None
             or _get_reasoning_tokens(getattr(response, "usage", None)) > 0
         )
-        if not (has_content or has_tool_calls or has_reasoning):
+        if not (has_content or has_tool_calls):
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+            # A reasoning model can burn its whole output budget before emitting
+            # visible text. That is a valid *truncated* generation, not a
+            # provider failure: accept it and let scoring handle it (#1767).
+            if has_reasoning and finish_reason == "length":
+                return
+            # Otherwise the model stopped cleanly having produced nothing the env
+            # can act on. This is not a completion. In tool-use rollouts it is
+            # indistinguishable from "the model finished" and silently ends the
+            # rollout via ``ToolEnv.no_tools_called``, scoring a destroyed turn as
+            # a legitimate one. It commonly means the server's reasoning parser
+            # swallowed a tool call the model did emit — e.g. a ``<tool_call>``
+            # block left inside an unclosed ``<think>`` span.
             raise EmptyModelResponseError(
-                "Model returned no content and did not call any tools"
+                "Model returned no content and did not call any tools "
+                f"(finish_reason={finish_reason!r}, "
+                f"reasoning={'present' if has_reasoning else 'absent'})"
             )
 
     async def from_native_response(self, response: OpenAIChatResponse) -> Response:
