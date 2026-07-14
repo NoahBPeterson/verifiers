@@ -902,7 +902,10 @@ async def test_get_native_response_threads_prompt_attribution_into_generate():
     client = object.__new__(RendererClient)
     client._renderer = object()
     client._pool_size = 1
-    client._config = vf.ClientConfig(client_type="renderer")
+    # Router replay is opt-in: the engine must have been launched with it.
+    client._config = vf.ClientConfig(
+        client_type="renderer", enable_return_routed_experts=True
+    )
     client._client = object()  # type: ignore[attr-defined]
 
     with (

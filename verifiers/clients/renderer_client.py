@@ -548,7 +548,14 @@ class RendererClient(
             prompt_ids = bridged.token_ids
             multi_modal_data = bridged.multi_modal_data
             prompt_attribution = bridged
-            sampling_params["routed_experts_prompt_start"] = routed_experts_prompt_start
+            # Router replay is a training-only capability the engine must have
+            # been launched with. Sending the offset to an engine that lacks it
+            # is a hard 400, so gate on config rather than on "do I happen to
+            # have an incremental prompt" — the two are unrelated.
+            if self._config is not None and self._config.enable_return_routed_experts:
+                sampling_params["routed_experts_prompt_start"] = (
+                    routed_experts_prompt_start
+                )
         else:
             prompt_ids = None
             multi_modal_data = None
