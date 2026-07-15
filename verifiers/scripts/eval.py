@@ -485,6 +485,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Max retries for transient infrastructure errors (default: 3)",
     )
     parser.add_argument(
+        "--turn-retries",
+        type=int,
+        default=None,
+        help=(
+            "Times to resample a single turn whose response had no content and "
+            "no tool calls (usually the server's reasoning parser swallowing a "
+            "tool call the model emitted). Turn-level, unlike --max-retries which "
+            "re-runs the whole rollout. Default 5; 0 disables. Overrides the "
+            "VF_EMPTY_RESPONSE_RETRIES env var."
+        ),
+    )
+    parser.add_argument(
         "--disable-env-server",
         default=False,
         action="store_true",
@@ -772,7 +784,7 @@ def main(argv: list[str] | None = None):
             ]
 
         assert primary_api_base_url is not None
-        client_config = ClientConfig(
+        client_config_kwargs: dict = dict(
             client_type=cast(ClientType, client_type),
             api_key_var=resolved_api_key_var,
             api_base_url=primary_api_base_url,
@@ -780,6 +792,9 @@ def main(argv: list[str] | None = None):
             extra_headers=merged_headers,
             extra_headers_from_state=eval_headers_from_state,
         )
+        if raw.get("turn_retries") is not None:
+            client_config_kwargs["empty_response_retries"] = raw["turn_retries"]
+        client_config = ClientConfig(**client_config_kwargs)
 
         # Backward-compatible TOML field: resume_path
         if raw.get("resume") is None and raw.get("resume_path") is not None:
